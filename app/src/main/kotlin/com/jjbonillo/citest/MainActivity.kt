@@ -30,6 +30,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+//Test
 @Composable
 fun Greeting(name: String, modifier: Modifier = Modifier) {
     Text(
