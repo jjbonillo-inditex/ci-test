@@ -1,0 +1,71 @@
+name: QA Approval Check
+
+on:
+  pull_request_review:
+    types: [ submitted, dismissed ]
+
+permissions:
+  pull-requests: read
+  checks: write
+
+concurrency:
+  group: qa-approval-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  detect_label:
+    name: 🏷️ Detect QA Label
+    runs-on: ubuntu-latest
+    outputs:
+      qa_mode: ${{ steps.set_mode.outputs.qa_mode }}
+    steps:
+      - name: Determine QA mode
+        id: set_mode
+        run: |
+          echo "🔍 Checking labels on PR..."
+
+          cat <<'EOF' > pr.json
+          ${{ toJson(github.event.pull_request) }}
+          EOF
+
+          labels=$(jq -r '.labels[].name' pr.json 2>/dev/null || echo "")
+
+          echo "Labels found: $labels"
+
+          if echo "$labels" | grep -q "\bqa\b"; then
+          echo "qa_mode=enabled" >> $GITHUB_OUTPUT
+          echo "✅ QA label detected"
+          elif echo "$labels" | grep -q "\bnoqa\b"; then
+          echo "qa_mode=disabled" >> $GITHUB_OUTPUT
+          echo "🚫 NOQA label detected"
+          else
+          echo "qa_mode=none" >> $GITHUB_OUTPUT
+          echo "::error::❌ No valid label found — failing workflow."
+          exit 1
+          fi
+
+  qa-approval:
+    name: QA approval required
+    runs-on: ubuntu-latest
+    needs: detect_label
+    if: ${{ always() && needs.detect_label.result == 'success' }}
+
+    steps:
+      - name: Check QA approval status
+        if: ${{ needs.detect_label.outputs.qa_mode == 'enabled' }}
+        run: |
+          echo "🔍 Checking if @jujodevs has approved..."
+          reviews=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews")
+
+          if echo "$reviews" | jq -e '.[] | select(.state=="APPROVED" and .user.login=="JuJoDevs")' > /dev/null; then
+            echo "✅ QA approval detected."
+          else
+            echo "::error::❌ QA approval required from @jujodevs."
+            exit 1
+          fi
+
+      - name: QA not required
+        if: ${{ needs.detect_label.outputs.qa_mode == 'disabled' }}
+        run: echo "✅ QA not required — skipping."
+
