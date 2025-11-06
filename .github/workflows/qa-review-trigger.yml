@@ -1,0 +1,15 @@
+name: QA Review Trigger
+on:
+  pull_request:
+    types: [ opened, labeled, unlabeled, synchronize, reopened ]
+  pull_request_review:
+    types: [submitted, dismissed]
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Re-run QA Approval
+        run: gh workflow run "QA Approval Check" -R ${{ github.repository }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
