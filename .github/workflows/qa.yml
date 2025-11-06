@@ -2,7 +2,7 @@ name: Conditional QA Workflow
 
 on:
   pull_request:
-    types: [labeled, unlabeled, synchronize]
+    types: [opened, reopened, labeled, unlabeled, synchronize]
 
 permissions:
   pull-requests: write
