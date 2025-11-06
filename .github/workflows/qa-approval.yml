@@ -1,20 +1,19 @@
 name: QA Approval Check
 
 on:
-  pull_request_review:
-    types: [ submitted, dismissed ]
+  issue_comment:
+    types: [created]
 
 permissions:
   pull-requests: read
   checks: write
 
-concurrency:
-  group: qa-approval-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
-
 jobs:
   detect_label:
     name: 🏷️ Detect QA Label
+    if: >
+      github.event.comment.body == '/qa-check' &&
+      github.event.issue.pull_request != null
     runs-on: ubuntu-latest
     outputs:
       qa_mode: ${{ steps.set_mode.outputs.qa_mode }}
@@ -25,7 +24,7 @@ jobs:
           echo "🔍 Checking labels on PR..."
 
           cat <<'EOF' > pr.json
-          ${{ toJson(github.event.pull_request) }}
+          ${{ toJson(github.event.issue.pull_request) }}
           EOF
 
           labels=$(jq -r '.labels[].name' pr.json 2>/dev/null || echo "")
