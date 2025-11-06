@@ -1,7 +1,8 @@
 name: QA Approval Check
 
 on:
-  workflow_dispatch:
+  pull_request:
+    types: [opened, reopened, labeled, unlabeled, synchronize, ready_for_review]
 
 permissions:
   pull-requests: read
@@ -67,4 +68,3 @@ jobs:
       - name: QA not required
         if: ${{ needs.detect_label.outputs.qa_mode == 'disabled' }}
         run: echo "✅ QA not required — skipping."
-

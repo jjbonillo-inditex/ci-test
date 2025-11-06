@@ -1,15 +1,23 @@
 name: QA Review Trigger
 on:
-  pull_request:
-    types: [ opened, labeled, unlabeled, synchronize, reopened ]
   pull_request_review:
     types: [submitted, dismissed]
+
+permissions:
+  pull-requests: write
+  contents: read
 
 jobs:
   trigger:
     runs-on: ubuntu-latest
     steps:
       - name: Re-run QA Approval
-        run: gh workflow run "QA Approval Check" -R ${{ github.repository }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "🔁 Triggering QA Approval Check on PR branch..."
+          gh api \
+            -X PUT \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/convert-to-draft" \
+          
