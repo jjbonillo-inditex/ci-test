@@ -55,7 +55,7 @@ jobs:
         run: |
           echo "🔍 Checking if @jujodevs has approved..."
           reviews=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews")
+            "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.issue.pull_request.number }}/reviews")
 
           if echo "$reviews" | jq -e '.[] | select(.state=="APPROVED" and .user.login=="JuJoDevs")' > /dev/null; then
             echo "✅ QA approval detected."
@@ -67,4 +67,3 @@ jobs:
       - name: QA not required
         if: ${{ needs.detect_label.outputs.qa_mode == 'disabled' }}
         run: echo "✅ QA not required — skipping."
-
