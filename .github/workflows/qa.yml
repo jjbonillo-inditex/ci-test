@@ -129,7 +129,7 @@ jobs:
             --input - <<EOF
             {
               "name": "QA Approval",
-              "head_sha": "${{ steps.get_sha.outputs.sha }}",
+              "head_sha": "${{ github.event.pull_request.head.sha }}",
               "status": "completed",
               "conclusion": "${{ needs.qa-approval.outputs.approval == 'true' && 'success' || 'failure' }}",
               "output": {
