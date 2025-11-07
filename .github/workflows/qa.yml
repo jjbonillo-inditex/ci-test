@@ -1,93 +1,69 @@
-name: Conditional QA Workflow
+name: Check QA Process
 
 on:
   pull_request:
     types: [opened, reopened, labeled, unlabeled, synchronize]
+  pull_request_review:
+    types: [submitted, dismissed]
+
+concurrency:
+  group: qa-proccess-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 permissions:
   pull-requests: write
   issues: write
   contents: read
-
+env:
+  QA: ${{ contains(github.event.pull_request.labels.*.name, 'qa') }}
+  NOQA : ${{ contains(github.event.pull_request.labels.*.name, 'noqa') }}
 jobs:
   detect_label:
+    if: ${{ github.event_name == 'pull_request' }}
     name: 🏷️ Detect QA Label
     runs-on: ubuntu-latest
-    outputs:
-      qa_mode: ${{ steps.set_mode.outputs.qa_mode }}
-    steps:
-      - name: Determine QA mode
-        id: set_mode
-        run: |
-          echo "🔍 Checking labels on PR..."
-      
-          cat <<'EOF' > pr.json
-          ${{ toJson(github.event.pull_request) }}
-          EOF
-      
-          labels=$(jq -r '.labels[].name' pr.json 2>/dev/null || echo "")
-      
-          echo "Labels found: $labels"
-      
-          if echo "$labels" | grep -q "\bqa\b"; then
-          echo "qa_mode=enabled" >> $GITHUB_OUTPUT
-          echo "✅ QA label detected"
-          elif echo "$labels" | grep -q "\bnoqa\b"; then
-          echo "qa_mode=disabled" >> $GITHUB_OUTPUT
-          echo "🚫 NOQA label detected"
-          else
-          echo "qa_mode=none" >> $GITHUB_OUTPUT
-          echo "::error::❌ No valid label found — failing workflow."
-          exit 1
-          fi
-
-  execute:
-    name: 🚀 Execute Based on Label
-    runs-on: ubuntu-latest
-    needs: detect_label
-    if: ${{ always() && needs.detect_label.result == 'success' }}
     steps:
       - name: Add reviewer to PR
-        if: ${{ needs.detect_label.outputs.qa_mode == 'enabled' }}
+        if: ${{ env.QA == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "👤 Adding reviewer to PR..."
-          
+
           PR_NUMBER=${{ github.event.pull_request.number }}
           REPO=${{ github.repository }}
           REVIEWER=JuJoDevs
-          
+
           curl -s -X POST \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/$REPO/pulls/$PR_NUMBER/requested_reviewers" \
             -d "{\"reviewers\":[\"$REVIEWER\"]}"
-          
+
           echo "✅ Reviewer @$REVIEWER added to PR #$PR_NUMBER"
 
       - name: Comment on PR to trigger mobile deploy
-        if: ${{ needs.detect_label.outputs.qa_mode == 'enabled' }}
+        if: ${{ env.QA == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "💬 Waiting 10s before commenting (in case a new job starts)..."
           sleep 5
           echo "💬 Commenting '/deploy-mobile' on PR..."
-          
+
           PR_NUMBER=${{ github.event.pull_request.number }}
           REPO=${{ github.repository }}
-          
+
           curl -s -X POST \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/comments" \
             -d '{"body":"/deploy-mobile"}'
-          
+
           echo "✅ Comment '/deploy-mobile' added to PR #$PR_NUMBER"
 
       - name: Skip QA and continue
-        if: ${{ needs.detect_label.outputs.qa_mode == 'disabled' }}
+        if: ${{ env.NOQA == 'true' }}
         run: echo "🚫 QA mode disabled — continuing without QA verification"
