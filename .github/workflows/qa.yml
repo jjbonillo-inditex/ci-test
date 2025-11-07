@@ -14,6 +14,7 @@ permissions:
   pull-requests: write
   issues: write
   contents: read
+  checks: write
 env:
   QA: ${{ contains(github.event.pull_request.labels.*.name, 'qa') }}
   NOQA : ${{ contains(github.event.pull_request.labels.*.name, 'noqa') }}
