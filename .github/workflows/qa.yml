@@ -20,12 +20,11 @@ env:
   NOQA : ${{ contains(github.event.pull_request.labels.*.name, 'noqa') }}
 jobs:
   detect_label:
-    if: ${{ github.event_name == 'pull_request' }}
     name: 🏷️ Detect QA Label
     runs-on: ubuntu-latest
     steps:
       - name: Add reviewer to PR
-        if: ${{ env.QA == 'true' }}
+        if: ${{ env.QA == 'true' && github.event_name == 'pull_request' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -45,7 +44,7 @@ jobs:
           echo "✅ Reviewer @$REVIEWER added to PR #$PR_NUMBER"
 
       - name: Comment on PR to trigger mobile deploy
-        if: ${{ env.QA == 'true' }}
+        if: ${{ env.QA == 'true' && github.event_name == 'pull_request' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -66,8 +65,13 @@ jobs:
           echo "✅ Comment '/deploy-mobile' added to PR #$PR_NUMBER"
 
       - name: Skip QA and continue
-        if: ${{ env.NOQA == 'true' }}
+        if: ${{ env.NOQA == 'true' && github.event_name == 'pull_request' }}
         run: echo "🚫 QA mode disabled — continuing without QA verification"
+
+      - name: Continue to QA Approval
+        if: ${{ github.event_name == 'pull_request_review' }}
+        run: |
+          echo "➡️ Pull Request Reviewed — continuing to QA Approval step"
 
   qa-approval:
     name: QA approval
