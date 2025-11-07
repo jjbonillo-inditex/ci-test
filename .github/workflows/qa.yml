@@ -106,3 +106,9 @@ jobs:
         run: |
           exit 1
 
+      - name: QA not required
+        id: qa-no-review
+        if: ${{ env.NOQA == 'true' }}
+        run: |
+          echo "✅ QA not required — skipping."
+
