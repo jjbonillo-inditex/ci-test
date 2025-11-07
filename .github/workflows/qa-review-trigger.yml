@@ -15,7 +15,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "🔁 Triggering QA Approval Check workflow..."
-          gh workflow run "QA Approval Check" \
+          gh workflow run ".github/workflows/qa-approval.yml" \
             -R ${{ github.repository }} \
             --ref "${{ github.event.pull_request.head.ref }}" \
             -f pr_number=${{ github.event.pull_request.number }}
