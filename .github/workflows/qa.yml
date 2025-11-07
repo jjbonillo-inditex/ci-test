@@ -69,12 +69,6 @@ jobs:
         if: ${{ env.NOQA == 'true' }}
         run: echo "🚫 QA mode disabled — continuing without QA verification"
 
-      - name: Continue to QA Approval
-        if: ${{ env.QA != 'true' && env.NOQA != 'true' }}
-        run: |
-          echo "➡️ No QA labels detected — continuing to QA Approval step"
-          exit 1
-
   qa-approval:
     name: QA approval
     runs-on: ubuntu-latest
@@ -111,4 +105,11 @@ jobs:
         if: ${{ env.NOQA == 'true' }}
         run: |
           echo "✅ QA not required — skipping."
+
+      - name: Continue to QA Approval
+        if: ${{ env.QA != 'true' && env.NOQA != 'true' }}
+        run: |
+          echo "➡️ No QA labels detected — continuing to QA Approval step"
+          exit 1
+
 
