@@ -54,22 +54,107 @@ jobs:
     runs-on: ubuntu-latest
     needs: detect_label
     if: ${{ always() && needs.detect_label.result == 'success' }}
+    outputs:
+      approval_result: ${{ steps.set_result.outputs.approval_result }}
 
     steps:
       - name: Check QA approval status
+        id: qa_enabled
         if: ${{ needs.detect_label.outputs.qa_mode == 'enabled' }}
         run: |
           echo "🔍 Checking if @jujodevs has approved..."
           reviews=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews")
+            "https://api.github.com/repos/${{ github.repository }}/pulls/${{ inputs.pr_number }}/reviews")
 
           if echo "$reviews" | jq -e '.[] | select(.state=="APPROVED" and .user.login=="JuJoDevs")' > /dev/null; then
             echo "✅ QA approval detected."
+            echo "approval_result=success" >> $GITHUB_OUTPUT
           else
             echo "::error::❌ QA approval required from @jujodevs."
-            exit 1
+            echo "approval_result=failure" >> $GITHUB_OUTPUT
           fi
 
       - name: QA not required
+        id: qa_disabled
         if: ${{ needs.detect_label.outputs.qa_mode == 'disabled' }}
-        run: echo "✅ QA not required — skipping."
+        run: |
+          echo "✅ QA not required — skipping."
+          echo "approval_result=success" >> $GITHUB_OUTPUT
+
+      - name: Set result
+        id: set_result
+        run: |
+          echo "approval_result=${{ steps.qa_enabled.outputs.approval_result || steps.qa_disabled.outputs.approval_result }}" >> $GITHUB_OUTPUT
+
+  qa-approval-check:
+    name: QA approval check
+    runs-on: ubuntu-latest
+    needs: qa-approval
+    if: ${{ always() && needs.qa-approval.result == 'success' }}
+
+    steps:
+      - name: Get PR head SHA
+        id: get_sha
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "🔍 Fetching head SHA for PR #${{ inputs.pr_number }}..."
+          sha=$(gh api repos/${{ github.repository }}/pulls/${{ inputs.pr_number }} --jq '.head.sha')
+          echo "sha=$sha" >> $GITHUB_OUTPUT
+
+      - name: Get method type
+        id: get_method
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "🔍 Fetching check_id for PR #${{ inputs.pr_number }}..."
+          check_id=$(gh api repos/${{ github.repository }}/commits/${{ steps.get_sha.outputs.sha }}/check-runs \
+            --jq '.check_runs[] | select(.name=="QA Approval") | .id' || true)
+          echo "check_id=/$check_id" >> $GITHUB_OUTPUT
+          if [ -n "$check_id" ]; then
+            echo "method=PATH" >> $GITHUB_OUTPUT
+          else
+            echo "method=POST" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send approval success check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        if: ${{ needs.qa-approval.outputs.approval_result == 'success' }}
+        run: |
+          gh api repos/${{ github.repository }}/check-runs \
+            --method POST \
+            -H "Accept: application/vnd.github+json" \
+            --input - <<EOF
+            {
+              "name": "QA Approval",
+              "head_sha": "${{ steps.get_sha.outputs.sha }}",
+              "status": "completed",
+              "conclusion": "success",
+              "output": {
+                "title": "QA approved ✅",
+                "summary": "PR approved by QA"
+              }
+            }
+          EOF
+
+      - name: Send approval failure check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        if: ${{ needs.qa-approval.outputs.approval_result == 'failure' }}
+        run: |
+          gh api repos/${{ github.repository }}/check-runs \
+            --method POST \
+            -H "Accept: application/vnd.github+json" \
+            --input - <<EOF
+            {
+              "name": "QA Approval",
+              "head_sha": "${{ steps.get_sha.outputs.sha }}",
+              "status": "completed",
+              "conclusion": "failure",
+              "output": {
+                "title": "QA approval required",
+                "summary": "❌ QA approval check failed — pending approval from QA"
+              }
+            }
+          EOF
