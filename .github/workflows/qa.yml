@@ -100,8 +100,9 @@ jobs:
           fi
 
       - name: Send approval success check
+        if: ${{ steps.qa-review.outputs.approval == 'false' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          exit ${{ needs.qa-approval.outputs.approval == 'true' && 0 || 1 }}
+          exit 1
 
