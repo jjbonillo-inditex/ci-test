@@ -80,26 +80,6 @@ jobs:
     runs-on: ubuntu-latest
     needs: detect_label
     steps:
-      - name: Create QA check
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          echo "🧩 Creating QA check..."
-          gh api repos/${{ github.repository }}/check-runs \
-            --method POST \
-            -H "Accept: application/vnd.github+json" \
-            --input - <<EOF
-            {
-              "name": "QA Approval",
-              "head_sha": "${{ github.event.pull_request.head.sha }}",
-              "status": "in_progress",
-              "output": {
-                "title": "QA review in progress",
-                "summary": "Waiting for QA approval result..."
-              }
-            }
-          EOF
-
       - name: Check QA approval status
         id: qa-review
         if: ${{ env.QA == 'true' }}
@@ -123,20 +103,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api repos/${{ github.repository }}/check-runs \
-            --method POST \
-            -H "Accept: application/vnd.github+json" \
-            --input - <<EOF
-            {
-              "name": "QA Approval",
-              "head_sha": "${{ github.event.pull_request.head.sha }}",
-              "status": "completed",
-              "conclusion": "${{ needs.qa-approval.outputs.approval == 'true' && 'success' || 'failure' }}",
-              "output": {
-                "title": "${{ needs.qa-approval.outputs.approval == 'true' && 'QA Approved' || 'QA Approval Required' }}",
-                "summary": "${{ needs.qa-approval.outputs.approval == 'true' && 'QA approval has been granted.' || 'QA approval is required from @jujodevs.' }}"
-              }
-            }
-          EOF
           exit ${{ needs.qa-approval.outputs.approval == 'true' && 0 || 1 }}
 
