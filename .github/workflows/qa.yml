@@ -67,3 +67,10 @@ jobs:
       - name: Skip QA and continue
         if: ${{ env.NOQA == 'true' }}
         run: echo "🚫 QA mode disabled — continuing without QA verification"
+
+      - name: Continue to QA Approval
+        if: ${{ env.QA != 'true' && env.NOQA != 'true' }}
+        run: |
+          echo "➡️ No QA labels detected — continuing to QA Approval step"
+          exit 1
+
