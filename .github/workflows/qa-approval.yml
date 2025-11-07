@@ -17,9 +17,71 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  qa-approval-check-in-progress:
+    name: QA approval check in progress
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Get PR head SHA
+        id: get_sha
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "🔍 Fetching head SHA for PR #${{ inputs.pr_number }}..."
+          sha=$(gh api repos/${{ github.repository }}/pulls/${{ inputs.pr_number }} --jq '.head.sha')
+          echo "sha=$sha" >> $GITHUB_OUTPUT
+
+      - name: Clean Check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          existing_id=$(gh api repos/${{ github.repository }}/commits/"${{ steps.get_sha.outputs.sha }}"/check-runs \
+            --jq '.check_runs[] | select(.name=="QA Approval") | .id' || true)
+            
+          if [[ -n "$existing_id" ]]; then
+            echo "⚠️ Found existing check-run ($existing_id), marking as cancelled..."
+            gh api \
+              repos/${{ github.repository }}/check-runs/$existing_id \
+              --method PATCH \
+              -H "Accept: application/vnd.github+json" \
+              --input - <<EOF
+              {
+                "status": "completed",
+                "conclusion": "cancelled",
+                "output": {
+                  "title": "Superseded run",
+                  "summary": "Cancelled because a new QA check was triggered."
+                }
+              }
+          EOF
+          else
+            echo "✅ No previous check to clean."
+          fi
+
+      - name: Create QA check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "🧩 Creating QA check..."
+          gh api repos/${{ github.repository }}/check-runs \
+            --method POST \
+            -H "Accept: application/vnd.github+json" \
+            --input - <<EOF
+            {
+              "name": "QA Approval",
+              "head_sha": "${{ steps.get_sha.outputs.sha }}",
+              "status": "in_progress",
+              "output": {
+                "title": "QA review in progress",
+                "summary": "Waiting for QA approval result..."
+              }
+            }
+          EOF
+
   detect_label:
     name: 🏷️ Detect QA Label
     runs-on: ubuntu-latest
+    needs: qa-approval-check-in-progress
     outputs:
       qa_mode: ${{ steps.set_mode.outputs.qa_mode }}
     steps:
@@ -46,7 +108,6 @@ jobs:
           else
           echo "qa_mode=none" >> $GITHUB_OUTPUT
           echo "::error::❌ No valid label found — failing workflow."
-          exit 1
           fi
 
   qa-approval:
@@ -65,8 +126,11 @@ jobs:
           echo "🔍 Checking if @jujodevs has approved..."
           reviews=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/${{ github.repository }}/pulls/${{ inputs.pr_number }}/reviews")
+          
+          last_state=$(echo "$reviews" | jq -r '[.[] | select(.user.login=="JuJoDevs")][-1].state // "NONE"')
+          echo "🧩 Last state: $last_state"
 
-          if echo "$reviews" | jq -e '.[] | select(.state=="APPROVED" and .user.login=="JuJoDevs")' > /dev/null; then
+          if [[ "$last_state" == "APPROVED" ]]; then
             echo "✅ QA approval detected."
             echo "approval_result=success" >> $GITHUB_OUTPUT
           else
@@ -81,10 +145,17 @@ jobs:
           echo "✅ QA not required — skipping."
           echo "approval_result=success" >> $GITHUB_OUTPUT
 
+      - name: NOQA label detected
+        id: no_qa_label
+        if: ${{ needs.detect_label.outputs.qa_mode == 'none' }}
+        run: |
+          echo "✅ QA not required — skipping."
+          echo "approval_result=failure" >> $GITHUB_OUTPUT
+
       - name: Set result
         id: set_result
         run: |
-          echo "approval_result=${{ steps.qa_enabled.outputs.approval_result || steps.qa_disabled.outputs.approval_result }}" >> $GITHUB_OUTPUT
+          echo "approval_result=${{ steps.qa_enabled.outputs.approval_result || steps.qa_disabled.outputs.approval_result || steps.no_qa_label.outputs.approval_result }}" >> $GITHUB_OUTPUT
 
   qa-approval-check:
     name: QA approval check
@@ -101,21 +172,6 @@ jobs:
           echo "🔍 Fetching head SHA for PR #${{ inputs.pr_number }}..."
           sha=$(gh api repos/${{ github.repository }}/pulls/${{ inputs.pr_number }} --jq '.head.sha')
           echo "sha=$sha" >> $GITHUB_OUTPUT
-
-      - name: Get method type
-        id: get_method
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          echo "🔍 Fetching check_id for PR #${{ inputs.pr_number }}..."
-          check_id=$(gh api repos/${{ github.repository }}/commits/${{ steps.get_sha.outputs.sha }}/check-runs \
-            --jq '.check_runs[] | select(.name=="QA Approval") | .id' || true)
-          echo "check_id=/$check_id" >> $GITHUB_OUTPUT
-          if [ -n "$check_id" ]; then
-            echo "method=PATH" >> $GITHUB_OUTPUT
-          else
-            echo "method=POST" >> $GITHUB_OUTPUT
-          fi
 
       - name: Send approval success check
         env:
@@ -141,7 +197,7 @@ jobs:
       - name: Send approval failure check
         env:
           GH_TOKEN: ${{ github.token }}
-        if: ${{ needs.qa-approval.outputs.approval_result == 'failure' }}
+        if: ${{ needs.qa-approval.outputs.approval_result == 'failure' || needs.qa-approval.outputs.approval_result == 'none' }}
         run: |
           gh api repos/${{ github.repository }}/check-runs \
             --method POST \

@@ -6,6 +6,10 @@ on:
   pull_request_review:
     types: [submitted, dismissed]
 
+concurrency:
+  group: qa-review-trigger-${{ inputs.pr_number }}
+  cancel-in-progress: true
+
 jobs:
   trigger:
     runs-on: ubuntu-latest
