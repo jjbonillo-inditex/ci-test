@@ -138,4 +138,5 @@ jobs:
               }
             }
           EOF
+          exit ${{ needs.qa-approval.outputs.approval == 'true' && 0 || 1 }}
 
