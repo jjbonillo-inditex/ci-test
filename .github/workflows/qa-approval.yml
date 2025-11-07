@@ -2,13 +2,18 @@ name: QA Approval Check
 
 on:
   workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number"
+        required: true
+        type: number
 
 permissions:
   pull-requests: read
   checks: write
 
 concurrency:
-  group: qa-approval-${{ github.event.pull_request.number }}
+  group: qa-approval-${{ inputs.pr_number }}
   cancel-in-progress: true
 
 jobs:
@@ -19,13 +24,14 @@ jobs:
       qa_mode: ${{ steps.set_mode.outputs.qa_mode }}
     steps:
       - name: Determine QA mode
+        env:
+          GH_TOKEN: ${{ github.token }}
         id: set_mode
         run: |
           echo "🔍 Checking labels on PR..."
 
-          cat <<'EOF' > pr.json
-          ${{ toJson(github.event.pull_request) }}
-          EOF
+          gh api repos/${{ github.repository }}/pulls/${{ inputs.pr_number }} > pr.json
+          cat pr.json | jq '.labels[].name'
 
           labels=$(jq -r '.labels[].name' pr.json 2>/dev/null || echo "")
 
@@ -67,4 +73,3 @@ jobs:
       - name: QA not required
         if: ${{ needs.detect_label.outputs.qa_mode == 'disabled' }}
         run: echo "✅ QA not required — skipping."
-
