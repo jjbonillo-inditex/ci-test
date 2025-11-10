@@ -116,4 +116,74 @@ jobs:
           echo "➡️ No QA labels detected — continuing to QA Approval step"
           exit 1
 
+  # Status check job that GitHub can use as a required check
+  qa-status-check:
+    name: QA Status Check
+    runs-on: ubuntu-latest
+    needs: [detect_label, qa-approval]
+    if: always() # Ensures this job runs regardless of previous job status
+    steps:
+      - name: Create or Update Status Check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "🔍 Creating/Updating QA Status Check..."
+
+          # Get PR information
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          REPO=${{ github.repository }}
+          SHA=${{ github.event.pull_request.head.sha }}
+
+          # Check if QA label is present
+          QA_LABEL="${{ env.QA }}"
+          NOQA_LABEL="${{ env.NOQA }}"
+
+          # Check the result of qa-approval job
+          QA_APPROVAL_RESULT="${{ needs.qa-approval.result }}"
+
+          echo "QA Label: $QA_LABEL"
+          echo "NoQA Label: $NOQA_LABEL"
+          echo "QA Approval Job Result: $QA_APPROVAL_RESULT"
+
+          # Determine final status
+          if [[ "$NOQA_LABEL" == "true" ]]; then
+            STATUS="success"
+            DESCRIPTION="✅ QA bypassed with 'noqa' label"
+            echo "$DESCRIPTION"
+          elif [[ "$QA_LABEL" == "true" ]]; then
+            if [[ "$QA_APPROVAL_RESULT" == "success" ]]; then
+              STATUS="success"
+              DESCRIPTION="✅ QA approved by reviewer"
+              echo "$DESCRIPTION"
+            else
+              STATUS="failure"
+              DESCRIPTION="❌ QA required but not approved"
+              echo "$DESCRIPTION"
+            fi
+          else
+            STATUS="failure"
+            DESCRIPTION="❌ PR requires either 'qa' or 'noqa' label"
+            echo "$DESCRIPTION"
+          fi
+
+          # Create/Update the status check via API
+          curl -s -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$REPO/statuses/$SHA" \
+            -d "{
+              \"state\": \"$STATUS\",
+              \"target_url\": \"https://github.com/$REPO/actions/runs/${{ github.run_id }}\",
+              \"description\": \"$DESCRIPTION\",
+              \"context\": \"qa-process\"
+            }"
+
+          echo "✅ Status check 'qa-process' updated with status: $STATUS"
+
+          # Also set the job result
+          if [[ "$STATUS" == "failure" ]]; then
+            exit 1
+          fi
+
 
