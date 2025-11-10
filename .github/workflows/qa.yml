@@ -1,4 +1,4 @@
-name: Check QA Process
+name: QA Process Check
 
 on:
   pull_request:
@@ -7,7 +7,7 @@ on:
     types: [submitted, dismissed]
 
 concurrency:
-  group: qa-proccess-${{ github.event.pull_request.number }}
+  group: qa-process-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 permissions:
@@ -16,178 +16,189 @@ permissions:
   contents: read
   checks: write
   statuses: write
+
 env:
-  QA: ${{ contains(github.event.pull_request.labels.*.name, 'qa') }}
-  NOQA : ${{ contains(github.event.pull_request.labels.*.name, 'noqa') }}
+  HAS_QA_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'qa') }}
+  HAS_NOQA_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'noqa') }}
+  QA_REVIEWER: "JuJoDevs"
+
 jobs:
-  detect_label:
-    name: 🏷️ Detect QA Label
+  validate-labels:
+    name: 🏷️ Validate QA Labels
     runs-on: ubuntu-latest
+    outputs:
+      needs-qa: ${{ steps.check-labels.outputs.needs-qa }}
+      skip-qa: ${{ steps.check-labels.outputs.skip-qa }}
+      valid-labels: ${{ steps.check-labels.outputs.valid-labels }}
     steps:
-      - name: Add reviewer to PR
-        if: ${{ env.QA == 'true' && github.event_name == 'pull_request' }}
+      - name: Check label requirements
+        id: check-labels
+        run: |
+          echo "QA Label: ${{ env.HAS_QA_LABEL }}"
+          echo "NoQA Label: ${{ env.HAS_NOQA_LABEL }}"
+
+          if [[ "${{ env.HAS_QA_LABEL }}" == "true" && "${{ env.HAS_NOQA_LABEL }}" == "true" ]]; then
+            echo "❌ Cannot have both 'qa' and 'noqa' labels"
+            echo "valid-labels=false" >> $GITHUB_OUTPUT
+            exit 1
+          elif [[ "${{ env.HAS_QA_LABEL }}" == "true" ]]; then
+            echo "✅ QA process required"
+            echo "needs-qa=true" >> $GITHUB_OUTPUT
+            echo "skip-qa=false" >> $GITHUB_OUTPUT
+            echo "valid-labels=true" >> $GITHUB_OUTPUT
+          elif [[ "${{ env.HAS_NOQA_LABEL }}" == "true" ]]; then
+            echo "✅ QA process skipped"
+            echo "needs-qa=false" >> $GITHUB_OUTPUT
+            echo "skip-qa=true" >> $GITHUB_OUTPUT
+            echo "valid-labels=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ PR must have either 'qa' or 'noqa' label"
+            echo "valid-labels=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+  setup-qa:
+    name: 🚀 Setup QA Process
+    runs-on: ubuntu-latest
+    needs: validate-labels
+    if: needs.validate-labels.outputs.needs-qa == 'true' && github.event_name == 'pull_request'
+    steps:
+      - name: Add QA reviewer
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "👤 Adding reviewer to PR..."
 
-          PR_NUMBER=${{ github.event.pull_request.number }}
-          REPO=${{ github.repository }}
-          REVIEWER=JuJoDevs
-
           curl -s -X POST \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/$REPO/pulls/$PR_NUMBER/requested_reviewers" \
-            -d "{\"reviewers\":[\"$REVIEWER\"]}"
+            "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/requested_reviewers" \
+            -d "{\"reviewers\":[\"${{ env.QA_REVIEWER }}\"]}" || true
 
-          echo "✅ Reviewer @$REVIEWER added to PR #$PR_NUMBER"
+          echo "✅ Reviewer @${{ env.QA_REVIEWER }} added to PR #${{ github.event.pull_request.number }}"
 
-      - name: Comment on PR to trigger mobile deploy
-        if: ${{ env.QA == 'true' && github.event_name == 'pull_request' }}
+      - name: Trigger mobile deployment
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "💬 Waiting 10s before commenting (in case a new job starts)..."
-          sleep 5
-          echo "💬 Commenting '/deploy-mobile' on PR..."
-
-          PR_NUMBER=${{ github.event.pull_request.number }}
-          REPO=${{ github.repository }}
+          echo "💬 Triggering mobile deployment..."
+          sleep 5  # Brief delay to avoid race conditions
 
           curl -s -X POST \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/comments" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
             -d '{"body":"/deploy-mobile"}'
 
-          echo "✅ Comment '/deploy-mobile' added to PR #$PR_NUMBER"
+          echo "✅ Mobile deployment triggered for PR #${{ github.event.pull_request.number }}"
 
-      - name: Skip QA and continue
-        if: ${{ env.NOQA == 'true' && github.event_name == 'pull_request' }}
-        run: echo "🚫 QA mode disabled — continuing without QA verification"
-
-      - name: Continue to QA Approval
-        if: ${{ github.event_name == 'pull_request_review' }}
-        run: |
-          echo "➡️ Pull Request Reviewed — continuing to QA Approval step"
-
-  qa-approval:
-    name: QA approval
+  check-qa-approval:
+    name: ✅ Check QA Approval
     runs-on: ubuntu-latest
-    needs: detect_label
+    needs: validate-labels
+    if: needs.validate-labels.outputs.needs-qa == 'true'
+    outputs:
+      approved: ${{ steps.verify-approval.outputs.approved }}
     steps:
-      - name: Check QA approval status
-        id: qa-review
-        if: ${{ env.QA == 'true' }}
-        run: |
-          echo "🔍 Checking if @jujodevs has approved..."
-          reviews=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews")
-
-          last_state=$(echo "$reviews" | jq -r '[.[] | select(.user.login=="JuJoDevs")][-1].state // "NONE"')
-          echo "🧩 Last state: $last_state"
-
-          if [[ "$last_state" == "APPROVED" ]]; then
-            echo "✅ QA approval detected."
-            echo "approval=true" >> $GITHUB_OUTPUT
-          else
-            echo "::error::❌ QA approval required from @jujodevs."
-            echo "approval=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Send approval success check
-        if: ${{ steps.qa-review.outputs.approval == 'false' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          exit 1
-
-      - name: QA not required
-        id: qa-no-review
-        if: ${{ env.NOQA == 'true' }}
-        run: |
-          echo "✅ QA not required — skipping."
-
-      - name: Continue to QA Approval
-        if: ${{ env.QA != 'true' && env.NOQA != 'true' }}
-        run: |
-          echo "➡️ No QA labels detected — continuing to QA Approval step"
-          exit 1
-
-  # Status check job that GitHub can use as a required check
-  qa-status-check:
-    name: QA Status Check
-    runs-on: ubuntu-latest
-    needs: [detect_label, qa-approval]
-    if: always() # Ensures this job runs regardless of previous job status
-    steps:
-      - name: Create or Update Status Check
+      - name: Verify QA approval
+        id: verify-approval
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "🔍 Creating/Updating QA Status Check..."
+          echo "🔍 Checking QA approval status..."
 
-          # Get PR information
-          PR_NUMBER=${{ github.event.pull_request.number }}
-          REPO=${{ github.repository }}
-          # Use the latest commit SHA from the event
-          SHA=${{ github.event.after || github.event.pull_request.head.sha }}
+          # Get all reviews for the PR
+          reviews=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews")
 
-          echo "Using SHA: $SHA"
+          # Check the latest review state from QA reviewer
+          last_state=$(echo "$reviews" | jq -r --arg reviewer "${{ env.QA_REVIEWER }}" \
+            '[.[] | select(.user.login==$reviewer)][-1].state // "NONE"')
 
-          # Check if QA label is present
-          QA_LABEL="${{ env.QA }}"
-          NOQA_LABEL="${{ env.NOQA }}"
+          echo "Last review state from @${{ env.QA_REVIEWER }}: $last_state"
 
-          # Check the result of qa-approval job
-          QA_APPROVAL_RESULT="${{ needs.qa-approval.result }}"
+          if [[ "$last_state" == "APPROVED" ]]; then
+            echo "✅ QA approved by @${{ env.QA_REVIEWER }}"
+            echo "approved=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ QA approval required from @${{ env.QA_REVIEWER }}"
+            echo "approved=false" >> $GITHUB_OUTPUT
+          fi
 
-          echo "QA Label: $QA_LABEL"
-          echo "NoQA Label: $NOQA_LABEL"
-          echo "QA Approval Job Result: $QA_APPROVAL_RESULT"
+      - name: Fail if not approved
+        if: steps.verify-approval.outputs.approved == 'false'
+        run: |
+          echo "::error::QA approval required from @${{ env.QA_REVIEWER }}"
+          exit 1
+
+  qa-status:
+    name: 📊 QA Status Check
+    runs-on: ubuntu-latest
+    needs: [validate-labels, check-qa-approval]
+    if: always()
+    steps:
+      - name: Update status check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "🔄 Updating QA status check..."
+
+          # Get commit SHA
+          SHA="${{ github.event.after || github.event.pull_request.head.sha }}"
+
+          # Determine status based on job results
+          LABELS_VALID="${{ needs.validate-labels.outputs.valid-labels }}"
+          NEEDS_QA="${{ needs.validate-labels.outputs.needs-qa }}"
+          SKIP_QA="${{ needs.validate-labels.outputs.skip-qa }}"
+          QA_APPROVED="${{ needs.check-qa-approval.outputs.approved }}"
+          QA_JOB_RESULT="${{ needs.check-qa-approval.result }}"
+
+          echo "Labels Valid: $LABELS_VALID"
+          echo "Needs QA: $NEEDS_QA"
+          echo "Skip QA: $SKIP_QA"
+          echo "QA Approved: $QA_APPROVED"
+          echo "QA Job Result: $QA_JOB_RESULT"
 
           # Determine final status
-          if [[ "$NOQA_LABEL" == "true" ]]; then
+          if [[ "$LABELS_VALID" != "true" ]]; then
+            STATUS="failure"
+            DESCRIPTION="❌ Invalid label configuration"
+          elif [[ "$SKIP_QA" == "true" ]]; then
             STATUS="success"
             DESCRIPTION="✅ QA bypassed with 'noqa' label"
-            echo "$DESCRIPTION"
-          elif [[ "$QA_LABEL" == "true" ]]; then
-            if [[ "$QA_APPROVAL_RESULT" == "success" ]]; then
+          elif [[ "$NEEDS_QA" == "true" ]]; then
+            if [[ "$QA_APPROVED" == "true" ]]; then
               STATUS="success"
-              DESCRIPTION="✅ QA approved by reviewer"
-              echo "$DESCRIPTION"
+              DESCRIPTION="✅ QA approved by @${{ env.QA_REVIEWER }}"
             else
               STATUS="failure"
-              DESCRIPTION="❌ QA required but not approved"
-              echo "$DESCRIPTION"
+              DESCRIPTION="❌ Waiting for QA approval from @${{ env.QA_REVIEWER }}"
             fi
           else
             STATUS="failure"
-            DESCRIPTION="❌ PR requires either 'qa' or 'noqa' label"
-            echo "$DESCRIPTION"
+            DESCRIPTION="❌ Unknown state"
           fi
 
-          # Create/Update the status check via API
+          echo "Final Status: $STATUS - $DESCRIPTION"
+
+          # Update GitHub status
           curl -s -X POST \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/$REPO/statuses/$SHA" \
+            "https://api.github.com/repos/${{ github.repository }}/statuses/$SHA" \
             -d "{
               \"state\": \"$STATUS\",
-              \"target_url\": \"https://github.com/$REPO/actions/runs/${{ github.run_id }}\",
+              \"target_url\": \"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\",
               \"description\": \"$DESCRIPTION\",
-              \"context\": \"qa-process\"
+              \"context\": \"🔍 review/qa-approval\"
             }"
 
-          echo "✅ Status check 'qa-process' updated with status: $STATUS"
+          echo "✅ Status check updated successfully"
 
-          # Also set the job result
+          # Exit with error if status is failure
           if [[ "$STATUS" == "failure" ]]; then
             exit 1
           fi
-
-
