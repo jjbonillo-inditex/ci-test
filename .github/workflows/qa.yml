@@ -193,7 +193,7 @@ jobs:
               \"state\": \"$STATUS\",
               \"target_url\": \"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\",
               \"description\": \"$DESCRIPTION\",
-              \"context\": \"🔍 review/qa-approval\"
+              \"context\": \"review/qa-approval\"
             }"
 
           echo "✅ Status check updated successfully"
