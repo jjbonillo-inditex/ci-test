@@ -15,6 +15,7 @@ permissions:
   issues: write
   contents: read
   checks: write
+  statuses: write
 env:
   QA: ${{ contains(github.event.pull_request.labels.*.name, 'qa') }}
   NOQA : ${{ contains(github.event.pull_request.labels.*.name, 'noqa') }}
@@ -132,7 +133,10 @@ jobs:
           # Get PR information
           PR_NUMBER=${{ github.event.pull_request.number }}
           REPO=${{ github.repository }}
-          SHA=${{ github.event.pull_request.head.sha }}
+          # Use the latest commit SHA from the event
+          SHA=${{ github.event.after || github.event.pull_request.head.sha }}
+
+          echo "Using SHA: $SHA"
 
           # Check if QA label is present
           QA_LABEL="${{ env.QA }}"
